@@ -1,0 +1,465 @@
+<head>
+    <script src="https://d3js.org/d3.v5.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.5.1/jquery.min.js"></script>
+    <script src="https://unpkg.com/d3-interpolate-path/build/d3-interpolate-path.min.js"></script>
+    <script src="https://code.jquery.com/jquery-1.12.4.js"></script>
+    <script src="https://code.jquery.com/ui/1.12.1/jquery-ui.js"></script>
+    <script src="https://cdn.jsdelivr.net/algoliasearch/3/algoliasearch.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/autocomplete.js/0/autocomplete.jquery.min.js"></script>
+    <script src="https://d3js.org/d3-selection-multi.v1.min.js"></script>
+    <script src="https://d3js.org/d3-hexbin.v0.2.min.js"></script>
+    <link rel="stylesheet" href="//code.jquery.com/ui/1.12.1/themes/base/jquery-ui.css">
+    <link rel="stylesheet" href="/resources/demos/style.css">
+    <style>
+        .algolia-autocomplete {
+            width: 200px;
+        }
+        .algolia-autocomplete .aa-input, .algolia-autocomplete .aa-hint {
+            width: 200px;
+        }
+        .algolia-autocomplete .aa-hint {
+         color: #999;
+        }
+        .algolia-autocomplete .aa-dropdown-menu {
+            width: 200px;
+            background-color: #fff;
+            border: 1px solid #999;
+            border-top: none;
+        }
+        .algolia-autocomplete .aa-dropdown-menu .aa-suggestion {
+            cursor: pointer;
+            padding: 5px 4px;
+        }
+        .algolia-autocomplete .aa-dropdown-menu .aa-suggestion.aa-cursor {
+            background-color: #B2D7FF;
+        }
+        .algolia-autocomplete .aa-dropdown-menu .aa-suggestion em {
+            font-weight: bold;
+            font-style: normal;
+        }
+        #slider-range-distance {
+            width: 200px;
+        }
+        #slider-range-dribbles {
+            width: 200px;
+        }
+        #slider-range-time {
+            width: 200px;
+        }
+        #container {
+            width: 95%;
+            margin: auto;
+            text-align: center;
+        }
+        .filterButton {
+            list-style-type:none;
+            display: inline;
+            padding: 10px;
+            cursor: pointer;
+            background-color: white;
+            color: black;
+        }
+        .selected {
+            background-color: black;
+            color: white;
+        }
+        body {
+            font-family: Calibri;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+            <h2>Visualizing Kobe - Points Per Attempt</h2>
+            <p>The following visualization is using data from Kobe Bryant's career from https://www.kaggle.com/c/kobe-bryant-shot-selection/data. The visualization is using Hex-Binning from D3.js to create a heatmap of Pts Per Att. Something to note is that I filtered out 
+                shots that were within 1 foot of the basket as they threw off the sizing scale for each bin. The dataset doesn't have too much information beyond the coordinates and success of each shot attempt, otherwise
+                more interesting filters could have been added to play with. By visualizing Points Per Attempt we can see which areas of the floor Kobe was most efficient from.</p>    
+        <div id='filters' style="display:inline-flex; width:90%; justify-content:center">
+            <div style="width:20%;display:block;">
+                <text style="padding-right:15px; padding-bottom:10px;" id='shotDistance' >Seasons: 1996 - 2015</text>
+                <div id="slider-range-season"></div>
+            </div>
+            <div id='shotButtons' style="width:20%;">
+                <ul>
+                    <li class="filterButton selected" id="2pt" data-col='2PT Field Goal'>2 Pt</li>
+                    <li class="filterButton selected" id='3pt' data-col='3PT Field Goal'>3 Pt</li>
+                </ul>
+            </div>
+        </div>
+        <div style="width:70%; margin:auto"  id='chart'>
+
+        </div>
+    </div>
+    <script>
+        d3.csv('data.csv').then(function(data){
+            console.log(d3.max(data,(d)=>+d.shot_distance));
+            console.log('data');
+            console.log(data);
+
+            const filteredData = data.filter((d)=>d.shot_made_flag !== "" && d.shot_distance > 1);
+
+            $('.filterButton').on('click',function(){
+                if($(this).hasClass('selected')){
+                    $(this).removeClass('selected');
+                }
+                else{
+                    $(this).addClass('selected');
+                }
+                applyFilters();
+            });
+
+            // Slider
+
+            $( "#slider-range-season" ).slider({
+                range: true,
+                min: 1996,
+                max: 2015,
+                values: [1996,2015],
+                slide: function( event, ui ) {
+                    $('#slider-range-season').attr('data-min',ui.values[0]);
+                    $('#slider-range-season').attr('data-max',ui.values[1]);
+                    $('#shotDistance').text('Seasons: ' + ui.values[0] + ' - ' + ui.values[1]);
+                    applyFilters();
+                }
+            });
+            $('#slider-range-season').attr('data-min',1996);
+            $('#slider-range-season').attr('data-max',2015);
+
+            
+            const applyFilters = function(){
+                let fData = JSON.parse(JSON.stringify(filteredData));
+
+                // shot distance slider
+                const sliderMin = $('#slider-range-season').attr('data-min');
+                const sliderMax = $('#slider-range-season').attr('data-max');
+
+                fData = fData.filter((d)=>{
+                    return parseInt(d.season.substring(0,4)) >= sliderMin && parseInt(d.season.substring(0,4)) <= sliderMax;
+                });
+                
+                // 2pt vs 3pt buttons
+                const fgTypes = [];
+                if($('#2pt').hasClass('selected')){
+                    fgTypes.push($('#2pt').attr('data-col'));
+                }
+                if($('#3pt').hasClass('selected')){
+                    fgTypes.push($('#3pt').attr('data-col'));
+                }
+                fData = fData.filter((d)=> fgTypes.includes(d.shot_type));
+
+                updateChart(fData);
+                // d3.selectAll('.hexbin').selectAll('*').remove();
+                console.log(fData);
+            }
+
+
+            const width = 600;
+            const height = 570;
+            const margins = {top:50, bottom:50, left:50, right:50};
+            const chart_width = width - margins.left - margins.right;
+            const chart_height = height - margins.top - margins.bottom;
+
+            const x_scale = d3.scaleLinear()
+                .range([0, 500])
+                .domain([-255, 255]);
+
+            const y_scale = d3.scaleLinear()
+                .range([470, 0])
+                .domain([-52.5, (470-47.5)+5]);
+
+            const initializeChart = function(){
+
+                const svg = d3.select("#chart").append("svg")
+                    .attr("width", 700)
+                    .attr("height", 570);
+
+                const chart = svg.append("g")
+                    .attr('id','svg')
+                    .attr('width',500)
+                    .attr('height',470)
+                    .attr("transform", `translate(${margins.left}, ${margins.top})`);
+
+                //outline of court
+                chart.append('rect')
+                    .attrs({'x':x_scale(-250),'y':y_scale(470-47.5),
+                    'width':(x_scale(250)-x_scale(0))*2,'height':y_scale(0)-y_scale(470)})
+                    .style('fill','#caa472')
+                    .style('stroke','black');
+
+                chart.append('circle')
+                    .attr('cx',x_scale(0))
+                    .attr('cy',y_scale(0))
+                    .attr('r',7)
+                    .style('fill-opacity',0)
+                    .style('stroke','red');
+
+                chart.append('line')
+                    .attr('x1',x_scale(-30))
+                    .attr('x2',x_scale(30))
+                    .attr('y1',y_scale(-10))
+                    .attr('y2',y_scale(-10))
+                    .style('stroke','black');
+
+
+                // 3pt line
+
+                chart.append('line')
+                    .attr('x1',x_scale(220))
+                    .attr('x2',x_scale(220))
+                    .attr('y1',y_scale(-47.5))
+                    .attr('y2',y_scale(140-47.5))
+                    .style('stroke','black');
+
+                chart.append('line')
+                    .attr('x1',x_scale(-220))
+                    .attr('x2',x_scale(-220))
+                    .attr('y1',y_scale(-47.5))
+                    .attr('y2',y_scale(140-47.5))
+                    .style('stroke','black');
+
+                let ThreePt = d3.arc()
+                    .innerRadius(231)
+                    .outerRadius(232)
+                    .startAngle(Math.PI/2-.378)
+                    .endAngle(-(Math.PI/2-.378))
+
+                // paint
+
+                let ft = d3.arc()
+                    .innerRadius(58)
+                    .outerRadius(59)
+                    .startAngle(Math.PI/2)
+                    .endAngle(-(Math.PI/2))
+
+                chart.append('line')
+                    .attr('x1',x_scale(80))
+                    .attr('x2',x_scale(80))
+                    .attr('y1',y_scale(-47.5))
+                    .attr('y2',y_scale(190-47.5))
+                    .style('stroke','black');
+
+                chart.append('line')
+                    .attr('x1',x_scale(-80))
+                    .attr('x2',x_scale(-80))
+                    .attr('y1',y_scale(-47.5))
+                    .attr('y2',y_scale(190-47.5))
+                    .style('stroke','black');
+
+                chart.append('line')
+                    .attr('x1',x_scale(60))
+                    .attr('x2',x_scale(60))
+                    .attr('y1',y_scale(-47.5))
+                    .attr('y2',y_scale(190-47.5))
+                    .style('stroke','black');
+
+                chart.append('line')
+                    .attr('x1',x_scale(-60))
+                    .attr('x2',x_scale(-60))
+                    .attr('y1',y_scale(-47.5))
+                    .attr('y2',y_scale(190-47.5))
+                    .style('stroke','black');
+
+                chart.append('line')
+                    .attr('x1',x_scale(-80))
+                    .attr('x2',x_scale(80))
+                    .attr('y1',y_scale(190-47.5))
+                    .attr('y2',y_scale(190-47.5))
+                    .style('stroke','black');
+
+                chart.append('path')
+                    .attr('d',ThreePt)
+                    .attr('transform','translate('+250+',' + 414+')');
+
+                chart.append('path')
+                    .attr('d',ft)
+                    .attr('transform','translate('+250+',' + 280+')');
+
+                svg.append('text')
+                    .attr('id','tooltip')
+                    .attr('x',320)
+                    .attr('y',50)
+                    .text('Points Per Att%: , FG%:');
+
+
+                // legend
+
+                svg.append('text')
+                    .attr('id','tooltip')
+                    .attr('x',600)
+                    .attr('y',120)
+                    .text('0 Points Per Att');
+
+                svg.append('rect')
+                    .attr('x',560)
+                    .attr('y', 100)
+                    .attr('width',30)
+                    .attr('height',30)
+                    .style('fill','blue')
+                    .style('stroke','black');
+
+                svg.append('text')
+                    .attr('id','tooltip')
+                    .attr('x',600)
+                    .attr('y',170)
+                    .text('1 Points Per Att');
+
+                svg.append('rect')
+                    .attr('x',560)
+                    .attr('y', 150)
+                    .attr('width',30)
+                    .attr('height',30)
+                    .style('fill','white')
+                    .style('stroke','black');
+
+                svg.append('text')
+                    .attr('id','tooltip')
+                    .attr('x',600)
+                    .attr('y',220)
+                    .text('2 Points Per Att');
+
+                svg.append('rect')
+                    .attr('x',560)
+                    .attr('y', 200)
+                    .attr('width',30)
+                    .attr('height',30)
+                    .style('fill','red')
+                    .style('stroke','black');
+            }
+
+            const updateChart = function(d){
+
+                const chart = d3.select('#svg');
+
+                // let circles = chart.selectAll(".circle")
+                //     .data(d);
+        
+                // circles.exit().remove();
+        
+                // let new_circles = circles
+                //     .enter()
+                //     .append("circle")
+                //     .attr("class", "circle")
+                //     .attr("cx", (d)=> {
+                //         if(+d['loc_y'] > (470-47.5)){
+                //             return x_scale(500 - (+d['loc_x']));
+                //         }
+                //         return x_scale(+d['loc_x']);
+                //     })
+                //     .attr("cy", (d) => {
+                //         if(+d['loc_y'] > (470-47.5)){
+                //             return y_scale(470 - (+d['loc_y']));
+                //         }
+                //         return y_scale(+d['loc_y']);
+                //     })
+                //     .attr('data-y',(d)=>+d['loc_y'])
+                //     .attr("r", 3)
+                //     .style("fill", "red")
+                //     .style("opacity", 0);  
+        
+                // circles = circles.merge(new_circles);
+
+                const hexbin = d3.hexbin()
+                    .radius(8) // size of the bin in px
+                    .extent([ [0, 0], [500, 470] ]);
+
+                 
+                let inputForHexbinFun = [];
+
+                d.forEach(function(dd) {
+                    let x_var = 0;
+                    let y_var = 0;
+                    if(+dd['loc_y'] > (470-47.5)){
+                        x_var = x_scale(-(+dd['loc_x']));
+                        y_var = y_scale(470-47.5 - ((+dd['loc_y'])-(470-47.5)));
+                    }
+                    else{
+                        x_var = x_scale(+dd['loc_x']);
+                        y_var = y_scale(+dd['loc_y']);
+                    }
+                    inputForHexbinFun.push( [x_var, y_var,+dd.shot_made_flag, +dd.shot_id,+dd.shot_distance,dd.shot_type] );
+                })
+
+                let hexData = hexbin(inputForHexbinFun);
+
+                for(let i=0;i<hexData.length;i++){
+                    let pointDict = {
+                        '2PT Field Goal': 2,
+                        '3PT Field Goal':3
+                    };
+                    let fgm = 0;
+                    let distance = 0;
+                    let points = 0;
+                    for(let j=0;j<hexData[i].length;j++){
+                        fgm += hexData[i][j][2];
+                        distance += hexData[i][j][4];
+                        points += (pointDict[hexData[i][j][5]]*hexData[i][j][2]);
+                    }
+                    
+                    hexData[i].FGM = fgm;
+                    hexData[i].dist = distance/hexData[i].length;
+                    hexData[i].size = hexData[i].length;
+                    hexData[i].points = points;
+
+                }
+
+                console.log(hexData);
+
+                // Prepare a color palette
+                var color = d3.scaleLinear()
+                    .domain([0, 1,2]) 
+                    .range(["blue", 'white', "red"]);
+
+                r = d3.scaleSqrt()
+                    .domain([0, d3.max(hexData, d => d.length)])
+                    .range([0, hexbin.radius() * Math.SQRT2])
+
+                // chart.selectAll('.hexbin').remove();
+
+                let hexBins = chart.selectAll('.hexbin')
+                    .data(hexData,(d)=>String(d.x+', '+d.y));
+
+                hexBins.exit().remove();
+
+                let newHexBins = hexBins
+                    .enter()
+                    .append('path')
+                    .attr('class','hexbin')
+                    .attr("d",(d)=> hexbin.hexagon(r(d.size)))
+                    .attr("transform", function(d) { return "translate(" + d.x + "," + d.y + ")"; })
+                    .attr('fill',(d)=>{
+                        return color(d.points/d.size);
+                    })
+                    .style('opacity',.7)
+                    .on('mouseover',function(d){
+                        d3.select('#tooltip').text('Points Per Att: '+(Math.round(10*(d.points/d.size))/10)+', FG%: '+Math.round(100*(d.FGM/d.size))+'%, ' + d.FGM + ' of ' + d.size);
+                        // console.log(d.FGM);
+                        // console.log(x_scale.invert(d.x) + ', ' + y_scale.invert(d.y));
+                        // console.log('distance: '+d.dist + ' size: ' + d.size);
+                        d3.select(this).style('stroke','white');
+                    })
+                    .on('mouseout',function(){
+                        d3.select(this).style('stroke','transparent');
+                    });
+
+                hexBins = hexBins.merge(newHexBins);
+
+                hexBins.transition()
+                    .duration(1000)
+                    .attr("d",(d)=> hexbin.hexagon(r(d.size)))
+                    .attr("transform", function(d) { return "translate(" + d.x + "," + d.y + ")"; })
+                    .attr('fill',(d)=>color(d.points/d.size));
+
+                chart.on('mouseout',function(){
+                    d3.select('#tooltip').text('Points Per Att%: , FG%:');
+                });
+           
+
+                                
+            }
+
+            initializeChart();
+            updateChart(filteredData);
+
+        });
+    </script>
+</body>
